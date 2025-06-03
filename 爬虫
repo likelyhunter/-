@@ -1,1 +1,80 @@
+import requests
+from bs4 import BeautifulSoup
+import os
+from datetime import datetime
+
+# 指定固定的桌面路径
+desktop_path = r'D:\Users\Desktop'
+save_path = os.path.join(desktop_path, 'douban_movie_top250.txt')
+
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Referer': 'https://movie.douban.com/'
+}
+
+
+def parse_html(html):
+    soup = BeautifulSoup(html, 'lxml')
+    movie_list = soup.find('ol', class_='grid_view')
+    if not movie_list:
+        return []
+
+    results = []
+    for movie in movie_list.find_all('li'):
+        try:
+            title_span = movie.find('span', class_='title')
+            title = title_span.text.strip() if title_span else "未知标题"
+
+            rating_span = movie.find('span', class_='rating_num')
+            rating = rating_span.text.strip() if rating_span else "暂无评分"
+
+            comment_span = movie.find('span', string=lambda t: t and '人评价' in t)
+            comment = comment_span.text.strip() if comment_span else "0人评价"
+
+            movie_info = f"""
+            █ 电影名称：{title}
+            ★ 豆瓣评分：{rating}
+            ☎ 评价人数：{comment}
+            {'━' * 30}"""
+            results.append(movie_info)
+        except Exception as e:
+            print(f"解析失败：{str(e)}")
+            continue
+    return results
+
+
+def save_to_txt():
+    # 确保保存目录存在
+    if not os.path.exists(desktop_path):
+        os.makedirs(desktop_path)
+
+    with open(save_path, 'w', encoding='utf-8') as f:
+        header = f"""
+        {'=' * 40}
+        豆瓣电影TOP250（完整版）
+        数据抓取时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        {'=' * 40}\n\n"""
+        f.write(header)
+
+        for i in range(10):
+            url = f'https://movie.douban.com/top250?start={i * 25}'
+            try:
+                response = requests.get(url, headers=headers, timeout=15)
+                response.raise_for_status()
+
+                movie_data = parse_html(response.text)
+                if movie_data:
+                    f.write('\n'.join(movie_data))
+                    f.write('\n')  # 分页间隔
+                    print(f'✅ 已成功抓取第 {i + 1} 页数据')
+                else:
+                    print(f'⚠ 第 {i + 1} 页无数据')
+            except Exception as e:
+                print(f'❌ 第 {i + 1} 页抓取失败: {str(e)}')
+                continue
+
+
+if __name__ == '__main__':
+    save_to_txt()
+    print(f'\n🎉 数据已保存到桌面文件：{save_path}')
 
