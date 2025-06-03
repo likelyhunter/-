@@ -1,1 +1,738 @@
+三种模拟策略
+# ---------------------- 初始设置 ----------------------
+set.seed(42)
+
+# 简化表示：棋盘为9x10矩阵，黑方为三卒（b1,b2,b3），红方为王、双车、一兵
+create_board <- function() {
+  list(
+    black = list(
+      b1 = c(4, 6),
+      b2 = c(2, 6),
+      b3 = c(6, 6)
+    ),
+    red = list(
+      king = c(4, 0),
+      rook1 = c(3, 2),
+      rook2 = c(5, 2),
+      pawn = c(4, 3)
+    )
+  )
+}
+
+# ------------------ 基本工具函数 -----------------------
+in_board <- function(pos) pos[1] >= 0 && pos[1] <= 8 && pos[2] >= 0 && pos[2] <= 9
+same_pos <- function(p1, p2) all(p1 == p2)
+
+# ------------------ 移动与吃子判断 -----------------------
+move_piece <- function(board, side, name, new_pos) {
+  board[[side]][[name]] <- new_pos
+  # 检查是否吃子
+  opp <- if (side == "red") "black" else "red"
+  for (k in names(board[[opp]])) {
+    if (same_pos(board[[opp]][[k]], new_pos)) {
+      board[[opp]][[k]] <- NULL
+    }
+  }
+  board
+}
+
+# ------------------ 获取可行走法（卒） -------------------
+get_black_moves <- function(board, heuristic = FALSE) {
+  moves <- list()
+  for (name in names(board$black)) {
+    pos <- board$black[[name]]
+    dirs <- list(c(0, -1))  # 卒只能往前
+    if (pos[2] <= 4) { # 过河后可左右
+      dirs <- c(dirs, list(c(-1, 0), c(1, 0)))
+    }
+    for (d in dirs) {
+      new_pos <- pos + d
+      if (in_board(new_pos)) {
+        if (!any(sapply(board$black, function(p) same_pos(p, new_pos)))) {
+          score <- 0
+          if (heuristic) {
+            # 启发式：靠近王 + 吃子 + 避免独卒 + 联动推进
+            if (any(sapply(board$red, function(p) same_pos(p, new_pos)))) score <- score + 5
+            dist_king <- sum(abs(board$red$king - new_pos))
+            score <- score + (10 - dist_king)
+          }
+          moves[[length(moves)+1]] <- list(name = name, to = new_pos, score = score)
+        }
+      }
+    }
+  }
+  # 如果启发式，返回最高分走法
+  if (heuristic && length(moves) > 0) {
+    max_score <- max(sapply(moves, function(m) m$score))
+    moves <- Filter(function(m) m$score == max_score, moves)
+  }
+  moves
+}
+
+# ------------------ 红方策略（防守优先） -------------------
+get_red_moves <- function(board) {
+  # 红方随机走，但优先车去防守 + 王逃跑
+  pieces <- names(board$red)
+  all_moves <- list()
+  for (name in pieces) {
+    pos <- board$red[[name]]
+    directions <- list(c(1, 0), c(-1, 0), c(0, 1), c(0, -1))
+    for (d in directions) {
+      new_pos <- pos + d
+      if (in_board(new_pos)) {
+        if (!any(sapply(board$red, function(p) same_pos(p, new_pos)))) {
+          # 红王不能进入黑卒范围
+          safe <- TRUE
+          if (name == "king") {
+            for (b in board$black) {
+              if (sum(abs(b - new_pos)) == 1) safe <- FALSE
+            }
+          }
+          if (safe) {
+            all_moves[[length(all_moves)+1]] <- list(name = name, to = new_pos)
+          }
+        }
+      }
+    }
+  }
+  all_moves
+}
+
+# ------------------ 判断胜负条件 ------------------------
+check_winner <- function(board) {
+  if (is.null(board$red$king)) return("black")
+  if (length(board$black) == 0) return("red")
+  return(NULL)
+}
+
+# ------------------ 蒙特卡洛模拟函数 ----------------------
+simulate_game <- function(strategy = "random", max_turns = 50) {
+  board <- create_board()
+  turn <- 1
+  for (i in 1:max_turns) {
+    side <- if (turn %% 2 == 1) "black" else "red"
+    winner <- check_winner(board)
+    if (!is.null(winner)) return(winner)
+
+    if (side == "black") {
+      moves <- get_black_moves(board, heuristic = (strategy == "heuristic"))
+      if (strategy == "mcts") {
+        best_move <- mcts_select(board, n_sim = 20)
+        if (!is.null(best_move)) {
+          board <- move_piece(board, "black", best_move$name, best_move$to)
+        } else if (length(moves) > 0) {
+          move <- sample(moves, 1)[[1]]
+          board <- move_piece(board, "black", move$name, move$to)
+        }
+      } else {
+        if (length(moves) == 0) return("red")
+        move <- sample(moves, 1)[[1]]
+        board <- move_piece(board, "black", move$name, move$to)
+      }
+    } else {
+      moves <- get_red_moves(board)
+      if (length(moves) == 0) return("black")
+      move <- sample(moves, 1)[[1]]
+      board <- move_piece(board, "red", move$name, move$to)
+    }
+
+    turn <- turn + 1
+  }
+  return("draw")
+}
+
+# ------------------ MCTS 单步选择函数 ---------------------
+mcts_select <- function(board, n_sim = 30) {
+  candidates <- get_black_moves(board, heuristic = TRUE)
+  if (length(candidates) == 0) return(NULL)
+  scores <- numeric(length(candidates))
+  for (i in seq_along(candidates)) {
+    move <- candidates[[i]]
+    win <- 0
+    for (j in 1:n_sim) {
+      temp_board <- move_piece(board, "black", move$name, move$to)
+      result <- simulate_random_from(temp_board)
+      if (result == "black") win <- win + 1
+    }
+    scores[i] <- win
+  }
+  best <- which.max(scores)
+  candidates[[best]]
+}
+
+# ------------------ 随机模拟整局（用于MCTS） ---------------------
+simulate_random_from <- function(board, max_turns = 30) {
+  turn <- 1
+  for (i in 1:max_turns) {
+    side <- if (turn %% 2 == 1) "red" else "black"
+    winner <- check_winner(board)
+    if (!is.null(winner)) return(winner)
+
+    if (side == "black") {
+      moves <- get_black_moves(board, heuristic = FALSE)
+      if (length(moves) == 0) return("red")
+      move <- sample(moves, 1)[[1]]
+      board <- move_piece(board, "black", move$name, move$to)
+    } else {
+      moves <- get_red_moves(board)
+      if (length(moves) == 0) return("black")
+      move <- sample(moves, 1)[[1]]
+      board <- move_piece(board, "red", move$name, move$to)
+    }
+    turn <- turn + 1
+  }
+  return("draw")
+}
+
+# ------------------ 实验对比不同策略 ---------------------
+strategies <- c("random", "heuristic", "mcts")
+results <- data.frame(strategy = strategies, black = 0, red = 0, draw = 0)
+
+for (s in strategies) {
+  cat(sprintf("▶ 正在模拟策略：%s...\n", s))
+  sims <- replicate(500, simulate_game(s))
+  results[results$strategy == s, "black"] <- mean(sims == "black")
+  results[results$strategy == s, "red"] <- mean(sims == "red")
+  results[results$strategy == s, "draw"] <- mean(sims == "draw")
+}
+
+write.csv(results, "蚯蚓降龙策略胜率对比.csv", row.names = FALSE)
+print(results)
+
+
+#   strategy black   red  draw
+1    random 0.152 0.014 0.834
+2 heuristic 0.774 0.036 0.190
+3      mcts 0.828 0.028 0.144
+
+
+红方防守优化
+# ---------------------- 初始设置 ----------------------
+set.seed(42)
+
+# 简化表示：棋盘为9x10矩阵，黑方为三卒（b1,b2,b3），红方为王、双车、一兵
+create_board <- function() {
+  list(
+    black = list(
+      b1 = c(4, 6),
+      b2 = c(2, 6),
+      b3 = c(6, 6)
+    ),
+    red = list(
+      king = c(4, 0),
+      rook1 = c(3, 2),
+      rook2 = c(5, 2),
+      pawn = c(4, 3)
+    )
+  )
+}
+
+# ------------------ 基本工具函数 -----------------------
+in_board <- function(pos) pos[1] >= 0 && pos[1] <= 8 && pos[2] >= 0 && pos[2] <= 9
+same_pos <- function(p1, p2) all(p1 == p2)
+
+# ------------------ 移动与吃子判断 -----------------------
+move_piece <- function(board, side, name, new_pos) {
+  board[[side]][[name]] <- new_pos
+  # 检查是否吃子
+  opp <- if (side == "red") "black" else "red"
+  for (k in names(board[[opp]])) {
+    if (same_pos(board[[opp]][[k]], new_pos)) {
+      board[[opp]][[k]] <- NULL
+    }
+  }
+  board
+}
+
+# ------------------ 获取可行走法（卒） -------------------
+get_black_moves <- function(board, heuristic = FALSE) {
+  moves <- list()
+  for (name in names(board$black)) {
+    pos <- board$black[[name]]
+    dirs <- list(c(0, -1))  # 卒只能往前
+    if (pos[2] <= 4) { # 过河后可左右
+      dirs <- c(dirs, list(c(-1, 0), c(1, 0)))
+    }
+    for (d in dirs) {
+      new_pos <- pos + d
+      if (in_board(new_pos)) {
+        if (!any(sapply(board$black, function(p) same_pos(p, new_pos)))) {
+          score <- 0
+          if (heuristic) {
+            # 启发式：靠近王 + 吃子 + 避免独卒 + 联动推进
+            if (any(sapply(board$red, function(p) same_pos(p, new_pos)))) score <- score + 5
+            dist_king <- sum(abs(board$red$king - new_pos))
+            score <- score + (10 - dist_king)
+          }
+          moves[[length(moves)+1]] <- list(name = name, to = new_pos, score = score)
+        }
+      }
+    }
+  }
+  # 如果启发式，返回最高分走法
+  if (heuristic && length(moves) > 0) {
+    max_score <- max(sapply(moves, function(m) m$score))
+    moves <- Filter(function(m) m$score == max_score, moves)
+  }
+  moves
+}
+
+# ------------------ 红方策略（防守优先） -------------------
+get_red_moves <- function(board) {
+  all_moves <- list()
+  scores <- c()
+
+  for (name in names(board$red)) {
+    pos <- board$red[[name]]
+    directions <- list(c(1, 0), c(-1, 0), c(0, 1), c(0, -1))
+    for (d in directions) {
+      new_pos <- pos + d
+      if (in_board(new_pos)) {
+        if (!any(sapply(board$red, function(p) same_pos(p, new_pos)))) {
+          # 红王不能贴近黑卒
+          safe <- TRUE
+          if (name == "king") {
+            for (b in board$black) {
+              if (sum(abs(b - new_pos)) == 1) {
+                safe <- FALSE
+                break
+              }
+            }
+          }
+          if (safe) {
+            # 启发式评分机制
+            score <- 0
+
+            # 如果能吃卒
+            if (any(sapply(board$black, function(p) same_pos(p, new_pos)))) {
+              score <- score + 10
+            }
+
+            # 王远离卒
+            if (name == "king") {
+              nearest卒 <- min(sapply(board$black, function(p) sum(abs(p - new_pos))))
+              score <- score + nearest卒
+            }
+
+            # 车靠近卒或王
+            if (grepl("rook", name)) {
+              min_d_to卒 <- min(sapply(board$black, function(p) sum(abs(p - new_pos))))
+              d_to_king <- sum(abs(new_pos - board$red$king))
+              score <- score + (10 - min_d_to卒) + (6 - d_to_king)
+            }
+
+            # 兵靠近卒
+            if (name == "pawn") {
+              min_d_to卒 <- min(sapply(board$black, function(p) sum(abs(p - new_pos))))
+              score <- score + (8 - min_d_to卒)
+            }
+
+            all_moves[[length(all_moves)+1]] <- list(name = name, to = new_pos, score = score)
+            scores <- c(scores, score)
+          }
+        }
+      }
+    }
+  }
+
+  # 选择分数最高的走法中随机一个
+  if (length(all_moves) == 0) return(list())
+  max_score <- max(scores)
+  best_moves <- all_moves[scores == max_score]
+  return(best_moves)
+}
+
+
+
+# ------------------ 判断胜负条件 ------------------------
+check_winner <- function(board) {
+  if (is.null(board$red$king)) return("black")
+  if (length(board$black) == 0) return("red")
+  return(NULL)
+}
+
+# ------------------ 蒙特卡洛模拟函数 ----------------------
+simulate_game <- function(strategy = "random", max_turns = 50) {
+  board <- create_board()
+  turn <- 1
+  for (i in 1:max_turns) {
+    side <- if (turn %% 2 == 1) "black" else "red"
+    winner <- check_winner(board)
+    if (!is.null(winner)) return(winner)
+
+    if (side == "black") {
+      moves <- get_black_moves(board, heuristic = (strategy == "heuristic"))
+      if (strategy == "mcts") {
+        best_move <- mcts_select(board, n_sim = 20)
+        if (!is.null(best_move)) {
+          board <- move_piece(board, "black", best_move$name, best_move$to)
+        } else if (length(moves) > 0) {
+          move <- sample(moves, 1)[[1]]
+          board <- move_piece(board, "black", move$name, move$to)
+        }
+      } else {
+        if (length(moves) == 0) return("red")
+        move <- sample(moves, 1)[[1]]
+        board <- move_piece(board, "black", move$name, move$to)
+      }
+    } else {
+      moves <- get_red_moves(board)
+      if (length(moves) == 0) return("black")
+      move <- sample(moves, 1)[[1]]
+      board <- move_piece(board, "red", move$name, move$to)
+    }
+
+    turn <- turn + 1
+  }
+  return("draw")
+}
+
+# ------------------ MCTS 单步选择函数 ---------------------
+mcts_select <- function(board, n_sim = 30) {
+  candidates <- get_black_moves(board, heuristic = TRUE)
+  if (length(candidates) == 0) return(NULL)
+  scores <- numeric(length(candidates))
+  for (i in seq_along(candidates)) {
+    move <- candidates[[i]]
+    win <- 0
+    for (j in 1:n_sim) {
+      temp_board <- move_piece(board, "black", move$name, move$to)
+      result <- simulate_random_from(temp_board)
+      if (result == "black") win <- win + 1
+    }
+    scores[i] <- win
+  }
+  best <- which.max(scores)
+  candidates[[best]]
+}
+
+# ------------------ 随机模拟整局（用于MCTS） ---------------------
+simulate_random_from <- function(board, max_turns = 30) {
+  turn <- 1
+  for (i in 1:max_turns) {
+    side <- if (turn %% 2 == 1) "red" else "black"
+    winner <- check_winner(board)
+    if (!is.null(winner)) return(winner)
+
+    if (side == "black") {
+      moves <- get_black_moves(board, heuristic = FALSE)
+      if (length(moves) == 0) return("red")
+      move <- sample(moves, 1)[[1]]
+      board <- move_piece(board, "black", move$name, move$to)
+    } else {
+      moves <- get_red_moves(board)
+      if (length(moves) == 0) return("black")
+      move <- sample(moves, 1)[[1]]
+      board <- move_piece(board, "red", move$name, move$to)
+    }
+    turn <- turn + 1
+  }
+  return("draw")
+}
+
+# ------------------ 实验对比不同策略 ---------------------
+strategies <- c("random", "heuristic", "mcts")
+results <- data.frame(strategy = strategies, black = 0, red = 0, draw = 0)
+
+for (s in strategies) {
+  cat(sprintf("▶ 正在模拟策略：%s...\n", s))
+  sims <- replicate(500, simulate_game(s))
+  results[results$strategy == s, "black"] <- mean(sims == "black")
+  results[results$strategy == s, "red"] <- mean(sims == "red")
+  results[results$strategy == s, "draw"] <- mean(sims == "draw")
+}
+
+write.csv(results, "蚯蚓降龙策略胜率对比.csv", row.names = FALSE)
+print(results)
+
+#   strategy black   red  draw
+1    random 0.050 0.720 0.230
+2 heuristic 0.072 0.904 0.024
+3      mcts 0.414 0.476 0.110
+
+
+黑方树搜索法优化
+# 安装一次即可
+# install.packages("future.apply")
+library(future.apply)
+plan(multisession)  # 自动使用多核
+
+# ---------------------- 初始设置 ----------------------
+set.seed(42)
+
+# 简化表示：棋盘为9x10矩阵，黑方为三卒（b1,b2,b3），红方为王、双车、一兵
+create_board <- function() {
+  list(
+    black = list(
+      b1 = c(4, 6),
+      b2 = c(2, 6),
+      b3 = c(6, 6)
+    ),
+    red = list(
+      king = c(4, 0),
+      rook1 = c(3, 2),
+      rook2 = c(5, 2),
+      pawn = c(4, 3)
+    )
+  )
+}
+
+# ------------------ 基本工具函数 -----------------------
+in_board <- function(pos) pos[1] >= 0 && pos[1] <= 8 && pos[2] >= 0 && pos[2] <= 9
+same_pos <- function(p1, p2) all(p1 == p2)
+
+# ------------------ 移动与吃子判断 -----------------------
+move_piece <- function(board, side, name, new_pos) {
+  board[[side]][[name]] <- new_pos
+  # 检查是否吃子
+  opp <- if (side == "red") "black" else "red"
+  for (k in names(board[[opp]])) {
+    if (same_pos(board[[opp]][[k]], new_pos)) {
+      board[[opp]][[k]] <- NULL
+    }
+  }
+  board
+}
+
+# ------------------ 获取可行走法（卒） -------------------
+get_black_moves <- function(board, heuristic = FALSE) {
+  moves <- list()
+  for (name in names(board$black)) {
+    pos <- board$black[[name]]
+    dirs <- list(c(0, -1))  # 卒只能往前
+    if (pos[2] <= 4) { # 过河后可左右
+      dirs <- c(dirs, list(c(-1, 0), c(1, 0)))
+    }
+    for (d in dirs) {
+      new_pos <- pos + d
+      if (in_board(new_pos)) {
+        if (!any(sapply(board$black, function(p) same_pos(p, new_pos)))) {
+          score <- 0
+          if (heuristic) {
+            # 启发式：靠近王 + 吃子 + 避免独卒 + 联动推进
+            if (any(sapply(board$red, function(p) same_pos(p, new_pos)))) score <- score + 5
+            dist_king <- sum(abs(board$red$king - new_pos))
+            score <- score + (10 - dist_king)
+          }
+          moves[[length(moves)+1]] <- list(name = name, to = new_pos, score = score)
+        }
+      }
+    }
+  }
+  # 如果启发式，返回最高分走法
+  if (heuristic && length(moves) > 0) {
+    max_score <- max(sapply(moves, function(m) m$score))
+    moves <- Filter(function(m) m$score == max_score, moves)
+  }
+  moves
+}
+black_move_score <- function(board, move) {
+  score <- 0
+  to <- move$to
+  king_dist <- sum(abs(to - board$red$king))
+  score <- score + (9 - king_dist)
+  if (any(sapply(board$red, function(p) same_pos(p, to)))) score <- score + 5
+  return(score)
+}
+
+
+
+# ------------------ 红方策略（防守优先） -------------------
+get_red_moves <- function(board) {
+  all_moves <- list()
+  scores <- c()
+  
+  for (name in names(board$red)) {
+    pos <- board$red[[name]]
+    directions <- list(c(1, 0), c(-1, 0), c(0, 1), c(0, -1))
+    for (d in directions) {
+      new_pos <- pos + d
+      if (in_board(new_pos)) {
+        if (!any(sapply(board$red, function(p) same_pos(p, new_pos)))) {
+          # 红王不能贴近黑卒
+          safe <- TRUE
+          if (name == "king") {
+            for (b in board$black) {
+              if (sum(abs(b - new_pos)) == 1) {
+                safe <- FALSE
+                break
+              }
+            }
+          }
+          if (safe) {
+            # 启发式评分机制
+            score <- 0
+            
+            # 如果能吃卒
+            if (any(sapply(board$black, function(p) same_pos(p, new_pos)))) {
+              score <- score + 10
+            }
+            
+            # 王远离卒
+            if (name == "king") {
+              nearest卒 <- min(sapply(board$black, function(p) sum(abs(p - new_pos))))
+              score <- score + nearest卒
+            }
+            
+            # 车靠近卒或王
+            if (grepl("rook", name)) {
+              min_d_to卒 <- min(sapply(board$black, function(p) sum(abs(p - new_pos))))
+              d_to_king <- sum(abs(new_pos - board$red$king))
+              score <- score + (10 - min_d_to卒) + (6 - d_to_king)
+            }
+            
+            # 兵靠近卒
+            if (name == "pawn") {
+              min_d_to卒 <- min(sapply(board$black, function(p) sum(abs(p - new_pos))))
+              score <- score + (8 - min_d_to卒)
+            }
+            
+            all_moves[[length(all_moves)+1]] <- list(name = name, to = new_pos, score = score)
+            scores <- c(scores, score)
+          }
+        }
+      }
+    }
+  }
+  
+  # 选择分数最高的走法中随机一个
+  if (length(all_moves) == 0) return(list())
+  max_score <- max(scores)
+  best_moves <- all_moves[scores == max_score]
+  return(best_moves)
+}
+
+
+
+# ------------------ 判断胜负条件 ------------------------
+check_winner <- function(board) {
+  if (is.null(board$red$king)) return("black")
+  if (length(board$black) == 0) return("red")
+  return(NULL)
+}
+
+# ------------------ 蒙特卡洛模拟函数 ----------------------
+simulate_game <- function(strategy = "mcts", max_turns = 50) {
+  board <- create_board()
+  turn <- 1
+  for (i in 1:max_turns) {
+    side <- if (turn %% 2 == 1) "black" else "red"
+    winner <- check_winner(board)
+    if (!is.null(winner)) return(winner)
+    
+    if (side == "black") {
+      moves <- get_black_moves(board, heuristic = TRUE)
+      if (strategy == "mcts") {
+        best_move <- mcts_select(board, n_sim = 100)
+        if (!is.null(best_move)) {
+          board <- move_piece(board, "black", best_move$name, best_move$to)
+        } else if (length(moves) > 0) {
+          move <- sample(moves, 1)[[1]]
+          board <- move_piece(board, "black", move$name, move$to)
+        }
+      } else {
+        if (length(moves) == 0) return("red")
+        move <- sample(moves, 1)[[1]]
+        board <- move_piece(board, "black", move$name, move$to)
+      }
+    } else {
+      moves <- get_red_moves(board)
+      if (length(moves) == 0) return("black")
+      move <- sample(moves, 1)[[1]]
+      board <- move_piece(board, "red", move$name, move$to)
+    }
+    
+    turn <- turn + 1
+  }
+  return("draw")
+}
+
+
+# ------------------ MCTS 单步选择函数 ---------------------
+mcts_select <- function(board, n_sim = 100, c_puct = 1.5) {
+  candidates <- get_black_moves(board, heuristic = TRUE)
+  if (length(candidates) == 0) return(NULL)
+  
+  priors <- sapply(candidates, function(m) black_move_score(board, m))
+  priors <- priors / sum(priors)
+  
+  N <- rep(0, length(candidates))
+  W <- rep(0, length(candidates))
+  Q <- rep(0, length(candidates))
+  P <- priors
+  
+  for (sim in 1:n_sim) {
+    # 防止除以0，添加一个小的常数
+    UCT <- Q + c_puct * P * sqrt(sum(N) + 1e-8) / (1 + N)
+    
+    if (any(is.na(UCT)) || all(is.na(UCT))) {
+      warning("UCT contains NA, skipping this simulation")
+      next
+    }
+    
+    i <- which.max(UCT)
+    
+    if (is.na(i) || i < 1 || i > length(candidates)) next
+    
+    move <- candidates[[i]]
+    temp_board <- move_piece(board, "black", move$name, move$to)
+    result <- simulate_random_from(temp_board)
+    
+    reward <- if (result == "black") 1 else if (result == "draw") 0.5 else 0
+    N[i] <- N[i] + 1
+    W[i] <- W[i] + reward
+    Q[i] <- W[i] / N[i]
+  }
+  
+  # 若无任何有效模拟结果，返回 NULL
+  if (all(N == 0)) return(NULL)
+  
+  best <- which.max(Q)
+  return(candidates[[best]])
+}
+
+
+# ------------------ 随机模拟整局（用于MCTS） ---------------------
+simulate_random_from <- function(board, max_turns = 30) {
+  turn <- 1
+  for (i in 1:max_turns) {
+    side <- if (turn %% 2 == 1) "red" else "black"
+    winner <- check_winner(board)
+    if (!is.null(winner)) return(winner)
+    
+    if (side == "black") {
+      moves <- get_black_moves(board, heuristic = FALSE)
+      if (length(moves) == 0) return("red")
+      move <- sample(moves, 1)[[1]]
+      board <- move_piece(board, "black", move$name, move$to)
+    } else {
+      moves <- get_red_moves(board)
+      if (length(moves) == 0) return("black")
+      move <- sample(moves, 1)[[1]]
+      board <- move_piece(board, "red", move$name, move$to)
+    }
+    turn <- turn + 1
+  }
+  return("draw")
+}
+
+# ------------------ 实验对比不同策略 ---------------------
+strategies <- c("mcts")
+results <- data.frame(strategy = strategies, black = 0, red = 0, draw = 0)
+
+for (s in strategies) {
+  cat(sprintf("▶ 正在模拟策略：%s...\n", s))
+  sims <- replicate(50, simulate_game(s))
+  results[results$strategy == s, "black"] <- mean(sims == "black")
+  results[results$strategy == s, "red"] <- mean(sims == "red")
+  results[results$strategy == s, "draw"] <- mean(sims == "draw")
+}
+
+write.csv(results, "蚯蚓降龙策略胜率对比.csv", row.names = FALSE)
+print(results)
+
+  strategy black  red draw
+1     mcts  0.52 0.38  0.1
+
+
 
