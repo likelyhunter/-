@@ -1,0 +1,7 @@
+openai                # ChatGPT 接口调用
+python-docx           # 自动化生成渗透测试报告（.docx）
+requests              # 发起 HTTP 请求
+beautifulsoup4        # 网页解析（信息收集辅助）
+python-nmap           # 用 Python 控制 Nmap 扫描
+rich                  # 输出美观格式化控制台信息
+python-dotenv         # 加载 .env 文件中的 API Key
