@@ -8,7 +8,7 @@
 邮箱伪造漏洞：
 该漏洞可以以别的学校的名义给指定用户发送邮件，若稍加利用可能会造成一定的影响。
 
-autochatgpt:
+autogpt:
 外部工具：
 工具名称         作用简述                        安装方式（Linux/macOS）            
 `nmap`           端口扫描、服务识别              `sudo apt install nmap` / `brew install nmap`                       
