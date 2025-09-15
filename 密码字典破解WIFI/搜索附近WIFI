@@ -1,0 +1,72 @@
+import os
+import time
+import pywifi
+
+# 获取桌面路径
+desktop_path = "D:\\Users\\Desktop"  # 替换为 实际桌面路径
+
+# 初始化 pywifi
+wifi = pywifi.PyWiFi()
+
+# 获取第一个无线网卡接口
+iface = wifi.interfaces()[0]
+
+# 开始扫描
+iface.scan()
+print('扫描WiFi中，请稍后………………')
+
+# 等待扫描完成
+time.sleep(10)  # 根据实际情况可能需要更长的时间来完成扫描
+
+# 获取扫描结果
+scan_results = iface.scan_results()
+
+# 创建保存结果的路径
+output_path = os.path.join(desktop_path, "WIFI.txt")
+
+# 将结果写入文件
+with open(output_path, "w", encoding="utf-8") as f:
+    # 写入标题
+    f.write('扫描完成！\n' + '*' * 50 + '\n')
+    f.write('\n%s\t%s\t%s\n' % ('WiFi编号', 'WiFi信号', 'WiFi名称'))
+
+    index = 0
+    for result in scan_results:
+        # 解决SSID乱码问题
+        try:
+            # 尝试不同的编码方式
+            ssid = result.ssid.encode('raw_unicode_escape').decode('utf-8')
+        except:
+            # 如果失败，尝试其他编码
+            try:
+                ssid = result.ssid.encode('latin-1').decode('utf-8')
+            except:
+                ssid = result.ssid  # 最后直接使用原始值
+
+        signal = result.signal
+        # 写入文件
+        f.write('%s\t\t\t%s\t\t\t%s\n' % (index, signal, ssid))
+        index += 1
+
+    f.write('\n' + '*' * 50)
+
+print(f'扫描结果已保存到: {output_path}')
+print('扫描完成！\n' + '*' * 50)
+print('\n%s\t%s\t%s' % ('WiFi编号', 'WiFi信号', 'WiFi名称'))
+
+index = 0
+for result in scan_results:
+    # 使用与文件相同的SSID处理方法
+    try:
+        ssid = result.ssid.encode('raw_unicode_escape').decode('utf-8')
+    except:
+        try:
+            ssid = result.ssid.encode('latin-1').decode('utf-8')
+        except:
+            ssid = result.ssid
+
+    signal = result.signal
+    print('%s\t\t\t%s\t\t\t%s' % (index, signal, ssid))
+    index += 1
+
+print('\n' + '*' * 50)
